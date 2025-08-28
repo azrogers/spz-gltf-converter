@@ -96,7 +96,7 @@ async function writeSpzGltf(cloud, output) {
             "extensions": {
               "KHR_gaussian_splatting": {
                 "extensions": {
-                  "KHR_gaussian_splatting_compression_spz": {
+                  "KHR_gaussian_splatting_compression_spz_2": {
                     "bufferView": 0
                   }
                 }
