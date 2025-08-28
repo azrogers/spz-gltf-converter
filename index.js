@@ -216,7 +216,12 @@ async function writeSpzGltf(cloud, output) {
     }
   }
 
-  const results = getGlb(gltf, Buffer.from(spzBytes));
+  const paddedSpzSize = Math.ceil(spzBytes.length / 4) * 4;
+  const paddedSpzBuffer = Buffer.alloc(paddedSpzSize);
+  paddedSpzBuffer.set(spzBytes, 0);
+  paddedSpzBuffer.fill(0, spzBytes.length, paddedSpzSize);
+
+  const results = getGlb(gltf, paddedSpzBuffer);
   await fs.promises.writeFile(output, results);
 }
 
