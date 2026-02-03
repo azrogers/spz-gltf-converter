@@ -1,9 +1,7 @@
 import yargs from "yargs";
 import fs from "fs";
-import { loadPly, serializeSpz } from "spz-js";
+import { loadPly, serializeSpz, loadSpz, serializePly } from "spz-js";
 import { Readable } from "stream";
-import gltfToGlb from "gltf-pipeline/lib/gltfToGlb.js";
-import { file } from "tmp-promise";
 import getJsonBufferPadded from "gltf-pipeline/lib/getJsonBufferPadded.js";
 
 function getGlb(gltf, binaryBuffer) {
@@ -106,7 +104,7 @@ async function writeSpzGltf(cloud, output) {
             "mode": 0
           }
         ],
-        
+
       }
     ],
     "nodes": [
@@ -144,7 +142,7 @@ async function writeSpzGltf(cloud, output) {
 
   const mins = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
   const maxs = [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE];
-  for(let i = 0; i < cloud.numPoints; i++) {
+  for (let i = 0; i < cloud.numPoints; i++) {
     mins[0] = Math.min(mins[0], cloud.positions[i * 3 + 0]);
     mins[1] = Math.min(mins[1], cloud.positions[i * 3 + 1]);
     mins[2] = Math.min(mins[2], cloud.positions[i * 3 + 2]);
@@ -166,7 +164,8 @@ async function writeSpzGltf(cloud, output) {
   gltf.accessors.push({
     "componentType": 5121,
     "count": cloud.numPoints,
-    "type": "VEC4"
+    "type": "VEC4",
+    "normalized": true
   });
 
   gltf.meshes[0].primitives[0].attributes["KHR_gaussian_splatting:ROTATION"] = gltf.accessors.length;
@@ -183,8 +182,8 @@ async function writeSpzGltf(cloud, output) {
     "type": "VEC3"
   });
 
-  if(cloud.shDegree > 0) {
-    for(let i = 0; i < 3; i++) {
+  if (cloud.shDegree > 0) {
+    for (let i = 0; i < 3; i++) {
       gltf.meshes[0].primitives[0].attributes[`KHR_gaussian_splatting:SH_DEGREE_1_COEF_${i}`] = gltf.accessors.length;
       gltf.accessors.push({
         "componentType": 5126,
@@ -194,8 +193,8 @@ async function writeSpzGltf(cloud, output) {
     }
   }
 
-  if(cloud.shDegree > 1) {
-    for(let i = 0; i < 5; i++) {
+  if (cloud.shDegree > 1) {
+    for (let i = 0; i < 5; i++) {
       gltf.meshes[0].primitives[0].attributes[`KHR_gaussian_splatting:SH_DEGREE_2_COEF_${i}`] = gltf.accessors.length;
       gltf.accessors.push({
         "componentType": 5126,
@@ -205,8 +204,8 @@ async function writeSpzGltf(cloud, output) {
     }
   }
 
-  if(cloud.shDegree > 2) {
-    for(let i = 0; i < 7; i++) {
+  if (cloud.shDegree > 2) {
+    for (let i = 0; i < 7; i++) {
       gltf.meshes[0].primitives[0].attributes[`KHR_gaussian_splatting:SH_DEGREE_3_COEF_${i}`] = gltf.accessors.length;
       gltf.accessors.push({
         "componentType": 5126,
@@ -233,13 +232,13 @@ async function convertPlyToSpz(input, output) {
 }
 
 function detectShDegree(vertex) {
-  if(vertex.sh3) {
+  if (vertex.sh3) {
     return 3;
-  } 
-  else if(vertex.sh2) {
+  }
+  else if (vertex.sh2) {
     return 2;
   }
-  else if(vertex.sh1) {
+  else if (vertex.sh1) {
     return 1;
   }
 
@@ -259,7 +258,7 @@ function convertJsonToGaussianCloud(json) {
     sh: new Float32Array()
   };
 
-  if(!json || !json.vertices || json.vertices.length == 0) {
+  if (!json || !json.vertices || json.vertices.length == 0) {
     return cloud;
   }
 
@@ -270,54 +269,58 @@ function convertJsonToGaussianCloud(json) {
   cloud.alphas = new Float32Array(json.vertices.length);
   cloud.colors = new Float32Array(json.vertices.length * 3);
   let numSh = 0;
-  if(cloud.shDegree > 0) {
+  if (cloud.shDegree > 0) {
     numSh += 3 * 3;
   }
-  if(cloud.shDegree > 1) {
+  if (cloud.shDegree > 1) {
     numSh += 3 * 5;
   }
-  if(cloud.shDegree > 2) {
+  if (cloud.shDegree > 2) {
     numSh += 3 * 7;
   }
   cloud.sh = new Float32Array(numSh);
 
-  for(let i = 0; i < json.vertices.length; i++) {
+  for (let i = 0; i < json.vertices.length; i++) {
     cloud.numPoints++;
     let vertex = json.vertices[i];
-    
+
     console.assert(vertex.position && vertex.position.length == 3);
     cloud.positions.set(vertex.position, i * 3);
-    
+
     console.assert(vertex.scale && vertex.scale.length == 3);
-    cloud.scales.set(vertex.scale, i * 3);
-    
+    cloud.scales.set([
+      Math.log(vertex.scale[0]),
+      Math.log(vertex.scale[1]),
+      Math.log(vertex.scale[2])
+    ], i * 3);
+
     console.assert(vertex.rotation && vertex.rotation.length == 4);
     cloud.rotations.set(vertex.rotation, i * 4);
-    
+
     console.assert(vertex.color && vertex.color.length == 4);
     cloud.alphas.set(vertex.color[3], i);
     cloud.colors.set(vertex.color.slice(0, 3), i * 3);
-    
-    if(cloud.shDegree > 0) {
+
+    if (cloud.shDegree > 0) {
       console.assert(vertex.sh1 && vertex.sh1.length == 3);
-      for(let j = 0; j < 3; j++) {
+      for (let j = 0; j < 3; j++) {
         console.assert(vertex.sh1[j] && vertex.sh1[j].length == 3);
         cloud.sh.set(vertex.sh1[j], i * numSh + j * 3);
       }
     }
 
-    if(cloud.shDegree > 1) {
+    if (cloud.shDegree > 1) {
       console.assert(vertex.sh2 && vertex.sh2.length == 5);
-      for(let j = 0; j < 5; j++) {
-        console.assert(vertex.sh2[j] && vertex.sh2[j].length == 5);
+      for (let j = 0; j < 5; j++) {
+        console.assert(vertex.sh2[j] && vertex.sh2[j].length == 3);
         cloud.sh.set(vertex.sh2[j], i * numSh + 3 * 3 + j * 3);
       }
     }
 
-    if(cloud.shDegree > 2) {
+    if (cloud.shDegree > 2) {
       console.assert(vertex.sh3 && vertex.sh3.length == 7);
-      for(let j = 0; j < 7; j++) {
-        console.assert(vertex.sh3[j] && vertex.sh3[j].length == 7);
+      for (let j = 0; j < 7; j++) {
+        console.assert(vertex.sh3[j] && vertex.sh3[j].length == 3);
         cloud.sh.set(vertex.sh3[j], i * numSh + 3 * 3 + 5 * 3 + j * 3);
       }
     }
@@ -329,6 +332,80 @@ function convertJsonToGaussianCloud(json) {
 async function convertJsonToSpz(input, output) {
   const json = JSON.parse(await fs.promises.readFile(input, "utf8"));
   await writeSpzGltf(convertJsonToGaussianCloud(json), output);
+}
+
+function readSpzPayloadFromGlb(buffer) {
+  const chunkTable = [];
+  let offset = 12;
+  const length = buffer.readUint32LE(8);
+  while(offset < length) {
+    let chunkLength = buffer.readUint32LE(offset);
+    let chunkType = buffer.readUint32LE(offset + 4);
+    let chunkOffset = offset + 8;
+    chunkTable.push({
+      length: chunkLength,
+      isJson: chunkType == 0x4E4F534A,
+      offset: chunkOffset
+    });
+
+    offset += chunkLength + 8;
+  }
+
+  const jsonChunk = chunkTable.filter(c => c.isJson)[0];
+  if(!jsonChunk) {
+    console.error("glb does not contain a JSON chunk");
+    return null;
+  }
+
+  const jsonData = JSON.parse(buffer.toString("utf8", jsonChunk.offset, jsonChunk.offset + jsonChunk.length));
+  let splatBufferView = -1;
+  (jsonData.meshes || []).forEach(mesh => {
+    (mesh.primitives || []).forEach(primitive => {
+      const splatExtension = (primitive.extensions || {})["KHR_gaussian_splatting"];
+      if(splatExtension.extensions) {
+        splatBufferView = splatExtension.extensions[Object.keys(splatExtension.extensions)[0]].bufferView;
+      }
+    });
+  });
+
+  if(splatBufferView == -1) {
+    console.error("could not find SPZ extension in glb");
+    return null;
+  }
+
+  const bufferView = jsonData.bufferViews[splatBufferView];
+  if(!bufferView) {
+    console.error(`invalid buffer view index ${splatBufferView}`);
+    return null;
+  }
+
+  const byteLength = bufferView.byteLength;
+  const byteOffset = bufferView.byteOffset || 0;
+
+  const binChunk = chunkTable.filter(c => !c.isJson)[0];
+  if(!binChunk) {
+    console.error("glb does not contain a binary chunk");
+    return null;
+  }
+
+  const spzData = buffer.subarray(binChunk.offset + byteOffset, binChunk.offset + byteOffset + byteLength);
+  return spzData;
+}
+
+async function convertSpzToPly(input, output) {
+  const file = await fs.promises.readFile(input);
+  let spzData;
+  if(file.readUint32LE(0) == 0x46546C67)
+  {
+    spzData = readSpzPayloadFromGlb(file);
+  } else {
+    console.error("text glTFs not currently supported for spz->ply");
+    return;
+  }
+
+  const spz = await loadSpz(spzData);
+  const ply = await serializePly(spz);
+  await fs.promises.writeFile(output, Buffer.from(ply));
 }
 
 const argv = yargs(process.argv.slice(2))
@@ -344,22 +421,32 @@ const argv = yargs(process.argv.slice(2))
     type: "string",
     description: "JSON file to convert to an SPZ glTF."
   })
+  .option("input-spz-gltf", {
+    alias: "ig",
+    type: "string",
+    description: "SPZ glTF/glb to convert to a PLY file."
+  })
   .option("output", {
     alias: "o",
     type: "string",
-    description: "Destination file for generated glTF."
+    description: "Destination file for generated glTF (or PLY if inputting a glTF)."
   })
   .conflicts("input-ply", "input-json")
+  .conflicts("input-ply", "input-spz-gltf")
+  .conflicts("input-json", "input-spz-gltf")
   .demandOption(["o"])
   .check((argv, options) => {
-    if(argv["input-ply"] && !fs.existsSync(argv["input-ply"])) {
+    if (argv["input-ply"] && !fs.existsSync(argv["input-ply"])) {
       throw new Error(`File ${argv["input-ply"]} does not exist.`);
     }
-    if(argv["input-json"] && !fs.existsSync(argv["input-json"])) {
+    if (argv["input-json"] && !fs.existsSync(argv["input-json"])) {
       throw new Error(`File ${argv["input-json"]} does not exist.`);
     }
-    if(!argv["input-ply"] && !argv["input-json"]) {
-      throw new Error(`One of input-ply or input-json must be specified.`);
+    if(argv["input-spz-gltf"] && !fs.existsSync(argv["input-spz-gltf"])){
+      throw new Error(`File ${argv["input-spz-gltf"]} does not exist.`);
+    }
+    if (!argv["input-ply"] && !argv["input-json"] && !argv["input-spz-gltf"]) {
+      throw new Error(`One of input-ply, input-json, or input-spz-gltf must be specified.`);
     }
     return true;
   })
@@ -367,15 +454,20 @@ const argv = yargs(process.argv.slice(2))
   .alias("h", "help")
   .parse();
 
-if(argv["input-ply"]) {
+if (argv["input-ply"]) {
   convertPlyToSpz(argv["input-ply"], argv.output).then(() => {
     console.log(`wrote gltf to ${argv.output}`);
   });
-} else if(argv["input-json"]) {
+} else if (argv["input-json"]) {
   convertJsonToSpz(argv["input-json"], argv.output).then(() => {
     console.log(`wrote gltf to ${argv.output}`);
   });
-} else {
-  console.error("Error: either PLY or JSON input file required");
+} else if (argv["input-spz-gltf"]) {
+  convertSpzToPly(argv["input-spz-gltf"], argv.output).then(() => {
+    console.log(`wrote ply to ${argv.output}`);
+  });
+}
+else {
+  console.error("Error: PLY, JSON, or glTF input file required");
   process.exit(1);
 }
